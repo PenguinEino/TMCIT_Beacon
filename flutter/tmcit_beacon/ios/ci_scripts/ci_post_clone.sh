@@ -23,6 +23,6 @@ HOMEBREW_NO_AUTO_UPDATE=1 brew install cocoapods || true
 
 # Install CocoaPods dependencies.
 cd ios
-pod install || true
+pod install
 
 exit 0
