@@ -107,12 +107,28 @@ class _BeaconHomePageState extends State<BeaconHomePage> {
             color: theme.colorScheme.errorContainer,
             child: Padding(
               padding: const EdgeInsets.all(16),
-              child: Text(
-                controller.error!,
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: theme.colorScheme.onErrorContainer,
-                  fontWeight: FontWeight.w600,
-                ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    controller.error!,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.onErrorContainer,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: FilledButton.tonalIcon(
+                      onPressed: () async {
+                        await openAppSettings();
+                      },
+                      icon: const Icon(Icons.settings),
+                      label: const Text('設定を開く'),
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
@@ -274,6 +290,9 @@ class BeaconScannerController extends ChangeNotifier {
   bool _isScanning = false;
   String? _error;
   DateTime? _lastScanTick;
+  bool _hasBackgroundPermission =
+      false; // iOS/Android background location allowed
+  String? _backgroundInfoMessage; // Non-blocking informational message
 
   final Map<String, BeaconSnapshot> _targetBeacons = {};
   final Map<String, BeaconSnapshot> _nearbyBeacons = {};
@@ -286,6 +305,8 @@ class BeaconScannerController extends ChangeNotifier {
   bool get isScanning => _isScanning;
   String? get error => _error;
   DateTime? get lastScanTick => _lastScanTick;
+  bool get hasBackgroundPermission => _hasBackgroundPermission;
+  String? get backgroundInfoMessage => _backgroundInfoMessage;
 
   List<BeaconSnapshot> get trackedBeacons => _sorted(_targetBeacons.values);
   List<BeaconSnapshot> get nearbyBeacons => _sorted(_nearbyBeacons.values);
@@ -382,17 +403,18 @@ class BeaconScannerController extends ChangeNotifier {
       }
 
       if (Platform.isIOS) {
+        // 必須: WhenInUse → Always の順で要求し、Always が得られなければ開始しない。
+        _backgroundInfoMessage = null; // 使わない（必須化）
+
         var whenInUseStatus = await Permission.locationWhenInUse.status;
         if (!whenInUseStatus.isGranted) {
           whenInUseStatus = await Permission.locationWhenInUse.request();
         }
-
         if (!whenInUseStatus.isGranted) {
           if (whenInUseStatus.isPermanentlyDenied) {
-            _error = '位置情報の使用が拒否されています。設定から許可を付与してください。';
-            await openAppSettings();
+            _error = '位置情報 (使用中) が拒否されています。設定アプリで許可してください。';
           } else {
-            _error = 'ビーコン検出には位置情報の利用許可が必要です。';
+            _error = 'ビーコン検出を開始するには位置情報 (使用中) の許可が必要です。';
           }
           return false;
         }
@@ -403,15 +425,17 @@ class BeaconScannerController extends ChangeNotifier {
         }
 
         if (!alwaysStatus.isGranted) {
+          _hasBackgroundPermission = false;
           if (alwaysStatus.isPermanentlyDenied) {
-            _error = 'バックグラウンド検出を行うには「常に許可」が必要です。設定アプリで変更してください。';
-            await openAppSettings();
+            _error =
+                '「常に許可」が付与されていません。バックグラウンド監視のため必須です。設定アプリで「常に許可」に変更してください。';
           } else {
-            _error = 'バックグラウンド検出を行うには位置情報を「常に許可」にしてください。';
+            _error = 'ビーコン検出を開始するには 位置情報 を「常に許可」に設定する必要があります。';
           }
           return false;
         }
 
+        _hasBackgroundPermission = true;
         return true;
       }
 
