@@ -5,26 +5,27 @@
 // gestures. You can also use WidgetTester to find child widgets in the widget
 // tree, read text, and verify that the values of widget properties are correct.
 
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:tmcit_beacon/main.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  testWidgets('Beacon dashboard renders initial state', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(const BeaconApp());
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+    expect(find.text('iBeacon モニタ'), findsOneWidget);
+    expect(find.textContaining('ステータス: 待機中'), findsOneWidget);
+    expect(find.text('ビーコン検出を開始'), findsOneWidget);
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
+    // Ensure the detected tab exists and can be switched to.
+    await tester.tap(find.text('検出一覧'));
+    await tester.pumpAndSettle();
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    expect(
+      find.textContaining('UUID 4b206330-cf87-4d78-b460-acc3240a4777'),
+      findsOneWidget,
+    );
   });
 }

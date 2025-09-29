@@ -1,0 +1,2 @@
+json_key_file(ENV["GOOGLE_PLAY_JSON_KEY"]) 
+package_name("jp.penguin-in.tmcit-beacon") # e.g. com.krausefx.app

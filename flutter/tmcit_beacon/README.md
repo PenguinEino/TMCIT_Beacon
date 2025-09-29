@@ -1,16 +1,42 @@
-# tmcit_beacon
+# TMCIT Beacon Scanner
 
-A new Flutter project.
+Flutter 製の iBeacon モニタリングアプリです。`dchs_flutter_beacon` プラグインを利用し、指定 UUID のビーコンをレンジング／モニタリングできます。スキャン開始後はバックグラウンドでも検出を継続します。
 
-## Getting Started
+## 開発環境
 
-This project is a starting point for a Flutter application.
+- Flutter 3.10 以降 (Dart 3.9)
+- iOS 14+ / Android 10+ デバイス推奨
 
-A few resources to get you started if this is your first Flutter project:
+依存関係を取得するには以下を実行します。
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+```bash
+flutter pub get
+```
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+## 使い方
+
+1. 実機にインストールして起動します。
+2. 初回起動時に以下の権限ダイアログが表示されるので、いずれも **許可** します。
+	- 位置情報「常に許可」
+	- Bluetooth の使用
+3. 「ビーコン検出を開始」をタップすると、モニタリングとレンジングがスタートします。
+4. バックグラウンドに移行しても検出は継続し、通知センターからアプリを戻すと最新のログと検出ビーコン一覧を確認できます。
+
+権限を拒否した場合は、アプリ内にエラーメッセージが表示されます。Android/iOS の設定アプリから手動で「位置情報を常に許可」に切り替えてください。
+
+## テスト
+
+ウィジェットテストを実行するには以下を使用します。
+
+```bash
+flutter test
+```
+
+## ソース構成
+
+- `lib/main.dart` — UI とスキャン制御ロジック。
+- `test/widget_test.dart` — 初期 UI の表示確認テスト。
+
+## ライセンス
+
+このリポジトリのコードはプロジェクトメンバー向けです。再配布時は各依存パッケージのライセンスに従ってください。
