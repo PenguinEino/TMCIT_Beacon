@@ -118,16 +118,38 @@ class _BeaconHomePageState extends State<BeaconHomePage> {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: FilledButton.tonalIcon(
-                      onPressed: () async {
-                        await openAppSettings();
-                      },
-                      icon: const Icon(Icons.settings),
-                      label: const Text('設定を開く'),
+                  if (!controller.hasBackgroundPermission)
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: FilledButton.tonalIcon(
+                        onPressed: () async {
+                          final confirmed = await showDialog<bool>(
+                            context: context,
+                            builder: (ctx) => AlertDialog(
+                              title: const Text('バックグラウンド検出を有効化'),
+                              content: const Text(
+                                'バックグラウンドでもビーコン領域の出入りを検出するために「常に許可」が必要です。\n\nこの後のシステムダイアログで「常に許可」を選択してください。',
+                              ),
+                              actions: [
+                                TextButton(
+                                  onPressed: () => Navigator.of(ctx).pop(false),
+                                  child: const Text('キャンセル'),
+                                ),
+                                FilledButton(
+                                  onPressed: () => Navigator.of(ctx).pop(true),
+                                  child: const Text('続ける'),
+                                ),
+                              ],
+                            ),
+                          );
+                          if (confirmed == true) {
+                            await _controller.requestAlwaysAuthorization();
+                          }
+                        },
+                        icon: const Icon(Icons.upgrade),
+                        label: const Text('「常に許可」をリクエスト'),
+                      ),
                     ),
-                  ),
                 ],
               ),
             ),
@@ -159,6 +181,58 @@ class _BeaconHomePageState extends State<BeaconHomePage> {
             .map((beacon) => _BeaconTile(beacon: beacon))
             .toList(),
         const SizedBox(height: 24),
+        if (controller.showUpgradeSuggestion) ...[
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('バックグラウンド検出を有効化', style: theme.textTheme.titleSmall),
+                  const SizedBox(height: 8),
+                  const Text('アプリを閉じても検出を継続するには位置情報を「常に許可」にしてください。'),
+                  const SizedBox(height: 12),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: FilledButton.tonal(
+                      onPressed: () async {
+                        final confirmed = await showDialog<bool>(
+                          context: context,
+                          builder: (ctx) => AlertDialog(
+                            title: const Text('「常に許可」をリクエスト'),
+                            content: const Text(
+                              '次に表示されるシステムダイアログで「常に許可」を選択してください。',
+                            ),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.of(ctx).pop(false),
+                                child: const Text('キャンセル'),
+                              ),
+                              FilledButton(
+                                onPressed: () => Navigator.of(ctx).pop(true),
+                                child: const Text('続ける'),
+                              ),
+                            ],
+                          ),
+                        );
+                        if (confirmed == true) {
+                          await _controller.requestAlwaysAuthorization();
+                          if (_controller.hasBackgroundPermission) {
+                            setState(() {
+                              /* suggestion auto hides */
+                            });
+                          }
+                        }
+                      },
+                      child: const Text('常に許可を付与'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 24),
+        ],
         Text('バックグラウンド動作について', style: theme.textTheme.titleMedium),
         const SizedBox(height: 8),
         Text(
@@ -292,7 +366,9 @@ class BeaconScannerController extends ChangeNotifier {
   DateTime? _lastScanTick;
   bool _hasBackgroundPermission =
       false; // iOS/Android background location allowed
-  String? _backgroundInfoMessage; // Non-blocking informational message
+  // Removed background info message (replaced by upgrade suggestion card)
+  bool _showUpgradeSuggestion = false; // triggers UI card
+  Timer? _delayedAlwaysPromptTimer;
 
   final Map<String, BeaconSnapshot> _targetBeacons = {};
   final Map<String, BeaconSnapshot> _nearbyBeacons = {};
@@ -306,7 +382,8 @@ class BeaconScannerController extends ChangeNotifier {
   String? get error => _error;
   DateTime? get lastScanTick => _lastScanTick;
   bool get hasBackgroundPermission => _hasBackgroundPermission;
-  String? get backgroundInfoMessage => _backgroundInfoMessage;
+  bool get showUpgradeSuggestion =>
+      _showUpgradeSuggestion && !_hasBackgroundPermission;
 
   List<BeaconSnapshot> get trackedBeacons => _sorted(_targetBeacons.values);
   List<BeaconSnapshot> get nearbyBeacons => _sorted(_nearbyBeacons.values);
@@ -345,6 +422,17 @@ class BeaconScannerController extends ChangeNotifier {
       await _startRanging();
 
       _isScanning = true;
+
+      // Schedule suggestion for Always permission after short delay (iOS only, if not granted)
+      if (Platform.isIOS && !_hasBackgroundPermission) {
+        _delayedAlwaysPromptTimer?.cancel();
+        _delayedAlwaysPromptTimer = Timer(const Duration(seconds: 8), () {
+          if (!_hasBackgroundPermission) {
+            _showUpgradeSuggestion = true;
+            notifyListeners();
+          }
+        });
+      }
     } on PlatformException catch (e) {
       _error = '初期化に失敗しました (${e.code}): ${e.message ?? '不明なエラー'}';
       await _stopStreams();
@@ -403,8 +491,7 @@ class BeaconScannerController extends ChangeNotifier {
       }
 
       if (Platform.isIOS) {
-        // 必須: WhenInUse → Always の順で要求し、Always が得られなければ開始しない。
-        _backgroundInfoMessage = null; // 使わない（必須化）
+        // iOS: 前景許可取得後に遅延で「常に許可」を別途案内するフロー。
 
         var whenInUseStatus = await Permission.locationWhenInUse.status;
         if (!whenInUseStatus.isGranted) {
@@ -449,7 +536,55 @@ class BeaconScannerController extends ChangeNotifier {
   Future<void> stopScanning() async {
     await _stopStreams();
     _isScanning = false;
+    _delayedAlwaysPromptTimer?.cancel();
     notifyListeners();
+  }
+
+  /// Attempts to upgrade iOS location authorization to Always.
+  /// Returns true if now granted, false otherwise.
+  Future<bool> requestAlwaysAuthorization() async {
+    if (!Platform.isIOS) return true; // Not applicable
+
+    try {
+      final whenInUse = await Permission.locationWhenInUse.status;
+      if (!whenInUse.isGranted) {
+        // Foreground not granted; request it first.
+        var r = await Permission.locationWhenInUse.request();
+        if (!r.isGranted) {
+          _error = '位置情報 (使用中) の許可が必要です。';
+          notifyListeners();
+          return false;
+        }
+      }
+
+      var always = await Permission.locationAlways.status;
+      if (always.isGranted) {
+        _hasBackgroundPermission = true;
+        notifyListeners();
+        return true;
+      }
+
+      if (always.isPermanentlyDenied) {
+        _error = '「常に許可」が拒否されています。設定アプリで変更してください。';
+        notifyListeners();
+        return false;
+      }
+
+      always = await Permission.locationAlways.request();
+      final granted = always.isGranted;
+      _hasBackgroundPermission = granted;
+      if (!granted) {
+        _error = 'バックグラウンド検出を有効にするには「常に許可」が必要です。';
+      } else {
+        _error = null;
+      }
+      notifyListeners();
+      return granted;
+    } catch (e) {
+      _error = '権限再リクエスト中にエラー: $e';
+      notifyListeners();
+      return false;
+    }
   }
 
   Future<void> _startMonitoring() async {
@@ -562,6 +697,7 @@ class BeaconScannerController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _delayedAlwaysPromptTimer?.cancel();
     _stopStreams();
     super.dispose();
   }
