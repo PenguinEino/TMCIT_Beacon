@@ -23,6 +23,10 @@ HOMEBREW_NO_AUTO_UPDATE=1 brew install cocoapods || true
 
 # Install CocoaPods dependencies.
 cd ios
+if [ ! -f Flutter/podhelper.rb ]; then
+	echo "Missing ios/Flutter/podhelper.rb. Ensure the repository includes the Flutter pod helper." >&2
+	exit 1
+fi
 pod install
 
 exit 0
