@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../services/beacon_service.dart';
+import '../services/debug_log_service.dart';
+import 'debug_log_dialog.dart';
 
 class ScanTab extends StatefulWidget {
   final BeaconService beaconService;
@@ -12,12 +14,17 @@ class ScanTab extends StatefulWidget {
 }
 
 class _ScanTabState extends State<ScanTab> with WidgetsBindingObserver {
+  final _debugLog = DebugLogService();
   String _statusMessage = 'Ready to scan';
   LocationPermissionStatus _permissionStatus = LocationPermissionStatus.denied;
 
   @override
   void initState() {
     super.initState();
+    // デバッグログを自動的に有効化（開発中は便利）
+    _debugLog.setEnabled(true);
+    _debugLog.log('[ScanTab] initState() called');
+
     WidgetsBinding.instance.addObserver(this);
     widget.beaconService.statusStream.listen((status) {
       if (mounted) {
@@ -40,7 +47,7 @@ class _ScanTabState extends State<ScanTab> with WidgetsBindingObserver {
     super.didChangeAppLifecycleState(state);
     // アプリがフォアグラウンドに戻ってきたときに権限状態を再確認
     if (state == AppLifecycleState.resumed) {
-      print('[ScanTab] App resumed, checking permissions...');
+      _debugLog.log('[ScanTab] App resumed, checking permissions...');
       // 設定アプリから戻った直後は権限情報が更新されていない可能性があるため、
       // 少し遅延を入れてから確認
       Future.delayed(const Duration(milliseconds: 500), () async {
@@ -50,7 +57,7 @@ class _ScanTabState extends State<ScanTab> with WidgetsBindingObserver {
           // 自動的にスキャンを開始するかメッセージを表示
           if (_permissionStatus == LocationPermissionStatus.always &&
               !widget.beaconService.isScanning) {
-            print(
+            _debugLog.log(
               '[ScanTab] Permission granted after settings, showing message',
             );
             if (mounted) {
@@ -76,104 +83,163 @@ class _ScanTabState extends State<ScanTab> with WidgetsBindingObserver {
   }
 
   Future<void> _checkPermissionStatus() async {
+    _debugLog.log('[ScanTab] _checkPermissionStatus() called');
     final status = await widget.beaconService.getLocationPermissionStatus();
-    print('[ScanTab] Permission status checked: $status');
+    _debugLog.log('[ScanTab] Permission status checked: $status');
     if (mounted) {
+      final oldStatus = _permissionStatus;
       setState(() {
         _permissionStatus = status;
       });
-      print('[ScanTab] State updated with permission: $_permissionStatus');
+      _debugLog.log(
+        '[ScanTab] State updated: $oldStatus -> $_permissionStatus',
+      );
+    } else {
+      _debugLog.log(
+        '[ScanTab] WARNING: Widget not mounted, skipping state update',
+      );
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24.0),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              widget.beaconService.isScanning
-                  ? Icons.radar
-                  : Icons.bluetooth_searching,
-              size: 100,
-              color: widget.beaconService.isScanning
-                  ? Colors.blue
-                  : Colors.grey,
-            ),
-            const SizedBox(height: 32),
-            Text(
-              widget.beaconService.isScanning ? 'スキャン中...' : 'スキャン停止中',
-              style: Theme.of(context).textTheme.headlineSmall,
-            ),
-            const SizedBox(height: 16),
-            Text(
-              _statusMessage,
-              style: Theme.of(context).textTheme.bodyMedium,
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'Target UUID:\n${BeaconService.targetUUID}',
-              style: Theme.of(
-                context,
-              ).textTheme.bodySmall?.copyWith(fontFamily: 'monospace'),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 24),
-            _buildPermissionStatusCard(),
-            const SizedBox(height: 24),
-            Row(
+    return Stack(
+      children: [
+        Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24.0),
+            child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                ElevatedButton.icon(
-                  onPressed: widget.beaconService.isScanning
-                      ? null
-                      : () async {
-                          await _handleStartScanning();
-                        },
-                  icon: const Icon(Icons.play_arrow),
-                  label: const Text('スキャン開始'),
-                  style: ElevatedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 24,
-                      vertical: 16,
-                    ),
-                  ),
+                Icon(
+                  widget.beaconService.isScanning
+                      ? Icons.radar
+                      : Icons.bluetooth_searching,
+                  size: 100,
+                  color: widget.beaconService.isScanning
+                      ? Colors.blue
+                      : Colors.grey,
                 ),
-                const SizedBox(width: 16),
-                ElevatedButton.icon(
-                  onPressed: !widget.beaconService.isScanning
-                      ? null
-                      : () async {
-                          await widget.beaconService.stopScanning();
-                          setState(() {});
-                        },
-                  icon: const Icon(Icons.stop),
-                  label: const Text('スキャン停止'),
-                  style: ElevatedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 24,
-                      vertical: 16,
+                const SizedBox(height: 32),
+                Text(
+                  widget.beaconService.isScanning ? 'スキャン中...' : 'スキャン停止中',
+                  style: Theme.of(context).textTheme.headlineSmall,
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  _statusMessage,
+                  style: Theme.of(context).textTheme.bodyMedium,
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'Target UUID:\n${BeaconService.targetUUID}',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodySmall?.copyWith(fontFamily: 'monospace'),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 24),
+                _buildPermissionStatusCard(),
+                const SizedBox(height: 24),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    ElevatedButton.icon(
+                      onPressed: widget.beaconService.isScanning
+                          ? null
+                          : () async {
+                              await _handleStartScanning();
+                            },
+                      icon: const Icon(Icons.play_arrow),
+                      label: const Text('スキャン開始'),
+                      style: ElevatedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 24,
+                          vertical: 16,
+                        ),
+                      ),
                     ),
-                  ),
+                    const SizedBox(width: 16),
+                    ElevatedButton.icon(
+                      onPressed: !widget.beaconService.isScanning
+                          ? null
+                          : () async {
+                              await widget.beaconService.stopScanning();
+                              setState(() {});
+                            },
+                      icon: const Icon(Icons.stop),
+                      label: const Text('スキャン停止'),
+                      style: ElevatedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 24,
+                          vertical: 16,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                TextButton.icon(
+                  onPressed: () {
+                    widget.beaconService.clearBeacons();
+                    setState(() {});
+                  },
+                  icon: const Icon(Icons.clear_all),
+                  label: const Text('検出履歴をクリア'),
                 ),
               ],
             ),
-            const SizedBox(height: 16),
-            TextButton.icon(
-              onPressed: () {
-                widget.beaconService.clearBeacons();
-                setState(() {});
-              },
-              icon: const Icon(Icons.clear_all),
-              label: const Text('検出履歴をクリア'),
-            ),
-          ],
+          ),
         ),
-      ),
+        // デバッグコントロールボタン（右下）
+        Positioned(
+          bottom: 16,
+          right: 16,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              FloatingActionButton(
+                mini: true,
+                heroTag: 'debug_log',
+                onPressed: () {
+                  showDialog(
+                    context: context,
+                    builder: (context) => const DebugLogDialog(),
+                  );
+                },
+                tooltip: 'デバッグログを表示',
+                child: const Icon(Icons.bug_report),
+              ),
+              const SizedBox(height: 8),
+              FloatingActionButton(
+                mini: true,
+                heroTag: 'debug_toggle',
+                backgroundColor: _debugLog.isEnabled
+                    ? Colors.orange
+                    : Colors.grey,
+                onPressed: () {
+                  setState(() {
+                    _debugLog.setEnabled(!_debugLog.isEnabled);
+                  });
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        _debugLog.isEnabled ? 'デバッグログ: ON' : 'デバッグログ: OFF',
+                      ),
+                      duration: const Duration(seconds: 1),
+                    ),
+                  );
+                },
+                tooltip: 'デバッグログ ON/OFF',
+                child: Icon(
+                  _debugLog.isEnabled ? Icons.visibility : Icons.visibility_off,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
@@ -229,26 +295,26 @@ class _ScanTabState extends State<ScanTab> with WidgetsBindingObserver {
   }
 
   Future<void> _handleStartScanning() async {
-    print('[ScanTab] _handleStartScanning called');
-    print(
+    _debugLog.log('[ScanTab] _handleStartScanning called');
+    _debugLog.log(
       '[ScanTab] Current _permissionStatus before check: $_permissionStatus',
     );
 
     // 権限状態を再確認
     await _checkPermissionStatus();
 
-    print(
+    _debugLog.log(
       '[ScanTab] Current _permissionStatus after check: $_permissionStatus',
     );
 
     if (_permissionStatus == LocationPermissionStatus.always) {
       // 「常に許可」の場合、スキャン開始
-      print('[ScanTab] Permission is always, starting scan...');
+      _debugLog.log('[ScanTab] Permission is always, starting scan...');
       await widget.beaconService.startScanning();
       setState(() {});
     } else {
       // それ以外の場合、権限リクエストダイアログを表示
-      print(
+      _debugLog.log(
         '[ScanTab] Permission not always ($_permissionStatus), showing dialog...',
       );
       await _showPermissionDialog();
@@ -326,7 +392,7 @@ class _ScanTabState extends State<ScanTab> with WidgetsBindingObserver {
       final requestResult = await widget.beaconService
           .requestAlwaysLocationPermission();
 
-      print('[ScanTab] Permission request result: $requestResult');
+      _debugLog.log('[ScanTab] Permission request result: $requestResult');
 
       if (requestResult == PermissionRequestResult.granted) {
         await _checkPermissionStatus();
