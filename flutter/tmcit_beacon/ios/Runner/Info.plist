@@ -47,5 +47,18 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>このアプリはiBeaconの検出のために位置情報を使用します。バックグラウンドでも動作します。</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>このアプリはiBeaconの検出のために位置情報を使用します。</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>このアプリはiBeaconの検出のためにBluetoothを使用します。</string>
+	<key>NSBluetoothPeripheralUsageDescription</key>
+	<string>このアプリはiBeaconの検出のためにBluetoothを使用します。</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>location</string>
+		<string>bluetooth-central</string>
+	</array>
 </dict>
 </plist>
