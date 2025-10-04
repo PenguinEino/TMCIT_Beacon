@@ -11,13 +11,14 @@ class ScanTab extends StatefulWidget {
   State<ScanTab> createState() => _ScanTabState();
 }
 
-class _ScanTabState extends State<ScanTab> {
+class _ScanTabState extends State<ScanTab> with WidgetsBindingObserver {
   String _statusMessage = 'Ready to scan';
   LocationPermissionStatus _permissionStatus = LocationPermissionStatus.denied;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     widget.beaconService.statusStream.listen((status) {
       if (mounted) {
         setState(() {
@@ -26,6 +27,22 @@ class _ScanTabState extends State<ScanTab> {
       }
     });
     _checkPermissionStatus();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    // アプリがフォアグラウンドに戻ってきたときに権限状態を再確認
+    if (state == AppLifecycleState.resumed) {
+      print('[ScanTab] App resumed, checking permissions...');
+      _checkPermissionStatus();
+    }
   }
 
   @override
@@ -222,23 +239,36 @@ class _ScanTabState extends State<ScanTab> {
             Text('位置情報の許可が必要です'),
           ],
         ),
-        content: const Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'バックグラウンドでビーコンを検出するため、位置情報の「常に許可」が必要です。',
-              style: TextStyle(fontSize: 16),
-            ),
-            SizedBox(height: 16),
-            Text(
-              '次の画面で「常に許可」を選択してください：',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-            ),
-            SizedBox(height: 8),
-            Text('1. 「使用中のみ許可」を選択'),
-            Text('2. 再度表示される画面で「常に許可に変更」を選択'),
-          ],
+        content: const SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'バックグラウンドでビーコンを検出するため、位置情報の「常に許可」が必要です。',
+                style: TextStyle(fontSize: 16),
+              ),
+              SizedBox(height: 16),
+              Text(
+                '📱 iOSの場合の手順：',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+              ),
+              SizedBox(height: 8),
+              Text('1. まず「使用中のみ許可」または\n   「アプリの使用中は許可」を選択'),
+              SizedBox(height: 4),
+              Text('2. その後、自動的に設定画面に移動'),
+              Text('   「位置情報」→「常に」を選択'),
+              SizedBox(height: 12),
+              Text(
+                '⚠️ 「使用中のみ許可」だけでは、バックグラウンドでビーコンを検出できません。',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.orange,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+            ],
+          ),
         ),
         actions: [
           TextButton(
@@ -258,6 +288,8 @@ class _ScanTabState extends State<ScanTab> {
       final requestResult = await widget.beaconService
           .requestAlwaysLocationPermission();
 
+      print('[ScanTab] Permission request result: $requestResult');
+
       if (requestResult == PermissionRequestResult.granted) {
         await _checkPermissionStatus();
         if (mounted) {
@@ -273,6 +305,12 @@ class _ScanTabState extends State<ScanTab> {
         if (mounted) {
           await _showOpenSettingsDialog();
         }
+      } else if (requestResult == PermissionRequestResult.needsSettings) {
+        // iOS で「使用中のみ許可」を取得した場合、設定画面へ誘導
+        await _checkPermissionStatus();
+        if (mounted) {
+          await _showIOSAlwaysPermissionDialog();
+        }
       } else {
         await _checkPermissionStatus();
         if (mounted) {
@@ -284,6 +322,69 @@ class _ScanTabState extends State<ScanTab> {
           );
         }
       }
+    }
+  }
+
+  Future<void> _showIOSAlwaysPermissionDialog() async {
+    final result = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.settings, color: Colors.blue),
+            SizedBox(width: 8),
+            Text('設定で「常に許可」に変更'),
+          ],
+        ),
+        content: const Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('「使用中のみ許可」を選択されました。', style: TextStyle(fontSize: 16)),
+            SizedBox(height: 16),
+            Text(
+              'バックグラウンドでビーコンを検出するには、設定で「常に許可」に変更する必要があります。',
+              style: TextStyle(fontSize: 14),
+            ),
+            SizedBox(height: 16),
+            Text(
+              '設定手順：',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+            ),
+            SizedBox(height: 8),
+            Text('1. 「設定を開く」をタップ'),
+            Text('2. 「位置情報」をタップ'),
+            Text('3. 「常に」を選択'),
+            Text('4. アプリに戻る'),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('後で'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('設定を開く'),
+          ),
+        ],
+      ),
+    );
+
+    if (result == true) {
+      await openAppSettings();
+      if (mounted) {
+        // 設定から戻ってきたら権限状態を再確認
+        Future.delayed(const Duration(seconds: 1), () {
+          if (mounted) {
+            _checkPermissionStatus();
+          }
+        });
+      }
+    } else {
+      // キャンセルされた場合も権限状態を更新
+      await _checkPermissionStatus();
     }
   }
 
@@ -332,7 +433,7 @@ class _ScanTabState extends State<ScanTab> {
       await openAppSettings();
       if (mounted) {
         // 設定から戻ってきたら権限状態を再確認
-        Future.delayed(const Duration(milliseconds: 500), () {
+        Future.delayed(const Duration(seconds: 1), () {
           if (mounted) {
             _checkPermissionStatus();
           }

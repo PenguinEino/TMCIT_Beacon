@@ -16,6 +16,7 @@ enum PermissionRequestResult {
   granted, // 許可された
   denied, // 拒否された
   permanentlyDenied, // 永続的に拒否された
+  needsSettings, // 設定画面での変更が必要（iOS の「常に許可」）
 }
 
 class BeaconService {
@@ -57,36 +58,70 @@ class BeaconService {
     final alwaysStatus = await Permission.locationAlways.status;
     final whenInUseStatus = await Permission.locationWhenInUse.status;
 
+    print(
+      '[BeaconService] Always status: $alwaysStatus, WhenInUse status: $whenInUseStatus',
+    );
+
     if (alwaysStatus.isGranted) {
       return LocationPermissionStatus.always;
     } else if (whenInUseStatus.isGranted) {
       return LocationPermissionStatus.whenInUse;
-    } else if (alwaysStatus.isDenied || whenInUseStatus.isDenied) {
-      return LocationPermissionStatus.denied;
-    } else {
+    } else if (alwaysStatus.isPermanentlyDenied ||
+        whenInUseStatus.isPermanentlyDenied) {
       return LocationPermissionStatus.permanentlyDenied;
+    } else {
+      return LocationPermissionStatus.denied;
     }
   }
 
   /// 位置情報の「常に許可」権限をリクエスト
   Future<PermissionRequestResult> requestAlwaysLocationPermission() async {
+    print('[BeaconService] Starting permission request...');
+
     // まず「使用中のみ許可」を取得
-    final whenInUseStatus = await Permission.locationWhenInUse.status;
+    var whenInUseStatus = await Permission.locationWhenInUse.status;
+    print('[BeaconService] Initial whenInUse status: $whenInUseStatus');
+
     if (!whenInUseStatus.isGranted) {
+      print('[BeaconService] Requesting whenInUse permission...');
       final result = await Permission.locationWhenInUse.request();
+      print('[BeaconService] WhenInUse request result: $result');
+
       if (!result.isGranted) {
+        if (result.isPermanentlyDenied) {
+          return PermissionRequestResult.permanentlyDenied;
+        }
         return PermissionRequestResult.denied;
       }
+      whenInUseStatus = result;
     }
 
-    // 次に「常に許可」を取得
-    final alwaysStatus = await Permission.locationAlways.status;
+    // iOSの場合、「使用中のみ許可」を取得した後、
+    // locationAlwaysのリクエストは設定画面への誘導が必要
+    var alwaysStatus = await Permission.locationAlways.status;
+    print('[BeaconService] Always status: $alwaysStatus');
+
     if (!alwaysStatus.isGranted) {
+      print('[BeaconService] Requesting always permission...');
+
+      // iOS では、Always 権限は設定画面でしか変更できない場合がある
       final result = await Permission.locationAlways.request();
-      if (result.isGranted) {
+      print('[BeaconService] Always request result: $result');
+
+      // 結果を再確認
+      await Future.delayed(const Duration(milliseconds: 500));
+      alwaysStatus = await Permission.locationAlways.status;
+      print('[BeaconService] Always status after request: $alwaysStatus');
+
+      if (alwaysStatus.isGranted) {
         return PermissionRequestResult.granted;
-      } else if (result.isPermanentlyDenied) {
+      } else if (alwaysStatus.isPermanentlyDenied ||
+          result.isPermanentlyDenied) {
         return PermissionRequestResult.permanentlyDenied;
+      } else if (whenInUseStatus.isGranted && !alwaysStatus.isGranted) {
+        // iOS の場合、「使用中のみ許可」は取得できたが「常に許可」は取得できなかった
+        // これは設定画面での変更が必要な状態
+        return PermissionRequestResult.needsSettings;
       } else {
         return PermissionRequestResult.denied;
       }
