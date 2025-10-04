@@ -41,7 +41,30 @@ class _ScanTabState extends State<ScanTab> with WidgetsBindingObserver {
     // アプリがフォアグラウンドに戻ってきたときに権限状態を再確認
     if (state == AppLifecycleState.resumed) {
       print('[ScanTab] App resumed, checking permissions...');
-      _checkPermissionStatus();
+      // 設定アプリから戻った直後は権限情報が更新されていない可能性があるため、
+      // 少し遅延を入れてから確認
+      Future.delayed(const Duration(milliseconds: 500), () async {
+        if (mounted) {
+          await _checkPermissionStatus();
+          // 権限が「常に許可」になっていて、スキャンが開始されていない場合は
+          // 自動的にスキャンを開始するかメッセージを表示
+          if (_permissionStatus == LocationPermissionStatus.always &&
+              !widget.beaconService.isScanning) {
+            print(
+              '[ScanTab] Permission granted after settings, showing message',
+            );
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('✓ 位置情報の「常に許可」が設定されました'),
+                  backgroundColor: Colors.green,
+                  duration: Duration(seconds: 2),
+                ),
+              );
+            }
+          }
+        }
+      });
     }
   }
 
@@ -54,10 +77,12 @@ class _ScanTabState extends State<ScanTab> with WidgetsBindingObserver {
 
   Future<void> _checkPermissionStatus() async {
     final status = await widget.beaconService.getLocationPermissionStatus();
+    print('[ScanTab] Permission status checked: $status');
     if (mounted) {
       setState(() {
         _permissionStatus = status;
       });
+      print('[ScanTab] State updated with permission: $_permissionStatus');
     }
   }
 
@@ -204,15 +229,28 @@ class _ScanTabState extends State<ScanTab> with WidgetsBindingObserver {
   }
 
   Future<void> _handleStartScanning() async {
+    print('[ScanTab] _handleStartScanning called');
+    print(
+      '[ScanTab] Current _permissionStatus before check: $_permissionStatus',
+    );
+
     // 権限状態を再確認
     await _checkPermissionStatus();
 
+    print(
+      '[ScanTab] Current _permissionStatus after check: $_permissionStatus',
+    );
+
     if (_permissionStatus == LocationPermissionStatus.always) {
       // 「常に許可」の場合、スキャン開始
+      print('[ScanTab] Permission is always, starting scan...');
       await widget.beaconService.startScanning();
       setState(() {});
     } else {
       // それ以外の場合、権限リクエストダイアログを表示
+      print(
+        '[ScanTab] Permission not always ($_permissionStatus), showing dialog...',
+      );
       await _showPermissionDialog();
     }
   }
@@ -297,8 +335,15 @@ class _ScanTabState extends State<ScanTab> with WidgetsBindingObserver {
             const SnackBar(
               content: Text('位置情報の権限が許可されました'),
               backgroundColor: Colors.green,
+              duration: Duration(seconds: 2),
             ),
           );
+          // 権限が取得できたので自動的にスキャンを開始
+          await Future.delayed(const Duration(milliseconds: 500));
+          if (_permissionStatus == LocationPermissionStatus.always) {
+            await widget.beaconService.startScanning();
+            setState(() {});
+          }
         }
       } else if (requestResult == PermissionRequestResult.permanentlyDenied) {
         await _checkPermissionStatus();
@@ -374,14 +419,7 @@ class _ScanTabState extends State<ScanTab> with WidgetsBindingObserver {
 
     if (result == true) {
       await openAppSettings();
-      if (mounted) {
-        // 設定から戻ってきたら権限状態を再確認
-        Future.delayed(const Duration(seconds: 1), () {
-          if (mounted) {
-            _checkPermissionStatus();
-          }
-        });
-      }
+      // 注: 設定アプリから戻ってきたときは didChangeAppLifecycleState で自動的にチェックされる
     } else {
       // キャンセルされた場合も権限状態を更新
       await _checkPermissionStatus();
