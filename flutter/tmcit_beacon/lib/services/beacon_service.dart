@@ -12,6 +12,14 @@ enum LocationPermissionStatus {
   permanentlyDenied, // 永続的に拒否
 }
 
+/// Bluetooth権限の状態
+enum BluetoothPermissionStatus {
+  granted, // 許可済み
+  denied, // 拒否
+  permanentlyDenied, // 永続的に拒否
+  notRequired, // 権限不要（古いAndroidバージョン）
+}
+
 /// 権限リクエストの結果
 enum PermissionRequestResult {
   granted, // 許可された
@@ -196,27 +204,137 @@ class BeaconService {
     }
   }
 
-  /// Bluetooth権限をチェック・リクエスト
-  Future<bool> checkAndRequestBluetoothPermissions() async {
-    if (await Permission.bluetooth.isDenied) {
-      await Permission.bluetooth.request();
-    }
+  /// Bluetooth権限の状態を取得
+  Future<BluetoothPermissionStatus> getBluetoothPermissionStatus() async {
+    try {
+      _debugLog.log('[BeaconService] Checking Bluetooth permissions...');
 
-    if (await Permission.bluetoothScan.isDenied) {
-      await Permission.bluetoothScan.request();
-    }
+      // Android 12+ (API 31+) では BLUETOOTH_SCAN と BLUETOOTH_CONNECT が必要
+      // iOS では Bluetooth 権限は NSBluetoothAlwaysUsageDescription で管理
+      final bluetoothScanStatus = await Permission.bluetoothScan.status;
+      final bluetoothConnectStatus = await Permission.bluetoothConnect.status;
+      final bluetoothStatus = await Permission.bluetooth.status;
 
-    if (await Permission.bluetoothConnect.isDenied) {
-      await Permission.bluetoothConnect.request();
-    }
+      _debugLog.log(
+        '[BeaconService] Bluetooth permissions - Scan: $bluetoothScanStatus, '
+        'Connect: $bluetoothConnectStatus, Bluetooth: $bluetoothStatus',
+      );
 
-    return true;
+      // Android 12+ の場合（bluetoothScan が denied 以外 = サポートされている）
+      if (!bluetoothScanStatus.isDenied ||
+          bluetoothScanStatus.isGranted ||
+          bluetoothScanStatus.isPermanentlyDenied ||
+          bluetoothScanStatus.isRestricted ||
+          bluetoothScanStatus.isLimited) {
+        if (bluetoothScanStatus.isGranted && bluetoothConnectStatus.isGranted) {
+          _debugLog.log('[BeaconService] Bluetooth: granted (Android 12+)');
+          return BluetoothPermissionStatus.granted;
+        } else if (bluetoothScanStatus.isPermanentlyDenied ||
+            bluetoothConnectStatus.isPermanentlyDenied) {
+          _debugLog.log('[BeaconService] Bluetooth: permanentlyDenied');
+          return BluetoothPermissionStatus.permanentlyDenied;
+        } else {
+          _debugLog.log('[BeaconService] Bluetooth: denied');
+          return BluetoothPermissionStatus.denied;
+        }
+      }
+      // iOS または 古いAndroid の場合
+      else {
+        // iOS では Bluetooth 権限は Info.plist で宣言するだけで、
+        // ユーザーの明示的な許可は不要（システムが自動管理）
+        if (bluetoothStatus.isGranted || bluetoothStatus.isDenied) {
+          _debugLog.log(
+            '[BeaconService] Bluetooth: notRequired (iOS or old Android)',
+          );
+          return BluetoothPermissionStatus.notRequired;
+        } else if (bluetoothStatus.isPermanentlyDenied) {
+          _debugLog.log('[BeaconService] Bluetooth: permanentlyDenied');
+          return BluetoothPermissionStatus.permanentlyDenied;
+        } else {
+          _debugLog.log('[BeaconService] Bluetooth: notRequired (default)');
+          return BluetoothPermissionStatus.notRequired;
+        }
+      }
+    } catch (e) {
+      _debugLog.log('[BeaconService] Error getting Bluetooth status: $e');
+      // エラーの場合は権限不要として扱う（互換性のため）
+      return BluetoothPermissionStatus.notRequired;
+    }
+  }
+
+  /// Bluetooth権限をリクエスト
+  Future<PermissionRequestResult> requestBluetoothPermission() async {
+    _debugLog.log('[BeaconService] Requesting Bluetooth permissions...');
+
+    try {
+      // Android 12+ の場合（bluetoothScan が denied 以外 = サポートされている）
+      final bluetoothScanStatus = await Permission.bluetoothScan.status;
+      if (!bluetoothScanStatus.isDenied ||
+          bluetoothScanStatus.isGranted ||
+          bluetoothScanStatus.isPermanentlyDenied) {
+        _debugLog.log(
+          '[BeaconService] Requesting Android 12+ Bluetooth permissions...',
+        );
+
+        final scanResult = await Permission.bluetoothScan.request();
+        final connectResult = await Permission.bluetoothConnect.request();
+
+        _debugLog.log(
+          '[BeaconService] Bluetooth request results - Scan: $scanResult, Connect: $connectResult',
+        );
+
+        if (scanResult.isGranted && connectResult.isGranted) {
+          return PermissionRequestResult.granted;
+        } else if (scanResult.isPermanentlyDenied ||
+            connectResult.isPermanentlyDenied) {
+          return PermissionRequestResult.permanentlyDenied;
+        } else {
+          return PermissionRequestResult.denied;
+        }
+      }
+      // 古い Android または iOS の場合
+      else {
+        final bluetoothStatus = await Permission.bluetooth.status;
+        if (!bluetoothStatus.isGranted && !bluetoothStatus.isDenied) {
+          _debugLog.log(
+            '[BeaconService] Requesting legacy Bluetooth permission...',
+          );
+          final result = await Permission.bluetooth.request();
+          _debugLog.log('[BeaconService] Bluetooth request result: $result');
+
+          if (result.isGranted) {
+            return PermissionRequestResult.granted;
+          } else if (result.isPermanentlyDenied) {
+            return PermissionRequestResult.permanentlyDenied;
+          } else {
+            return PermissionRequestResult.denied;
+          }
+        }
+        // iOS または権限不要（自動的に許可される）
+        _debugLog.log('[BeaconService] Bluetooth: granted (not required)');
+        return PermissionRequestResult.granted;
+      }
+    } catch (e) {
+      _debugLog.log('[BeaconService] Error requesting Bluetooth: $e');
+      return PermissionRequestResult.denied;
+    }
   }
 
   /// 全ての必須権限をチェック（「常に許可」が必須）
   Future<bool> checkAllPermissions() async {
     final locationStatus = await getLocationPermissionStatus();
-    return locationStatus == LocationPermissionStatus.always;
+    final bluetoothStatus = await getBluetoothPermissionStatus();
+
+    final locationOk = locationStatus == LocationPermissionStatus.always;
+    final bluetoothOk =
+        bluetoothStatus == BluetoothPermissionStatus.granted ||
+        bluetoothStatus == BluetoothPermissionStatus.notRequired;
+
+    _debugLog.log(
+      '[BeaconService] All permissions check - Location: $locationOk, Bluetooth: $bluetoothOk',
+    );
+
+    return locationOk && bluetoothOk;
   }
 
   Future<void> startScanning() async {
@@ -226,15 +344,12 @@ class BeaconService {
     }
 
     try {
-      // 「常に許可」権限のチェック
+      // 全ての必須権限のチェック
       final hasAllPermissions = await checkAllPermissions();
       if (!hasAllPermissions) {
-        _updateStatus('位置情報の「常に許可」が必要です');
+        _updateStatus('必要な権限が許可されていません');
         return;
       }
-
-      // Bluetooth権限のチェック
-      await checkAndRequestBluetoothPermissions();
 
       _isScanning = true;
       _updateStatus('Starting beacon scan...');

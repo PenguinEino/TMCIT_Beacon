@@ -17,6 +17,8 @@ class _ScanTabState extends State<ScanTab> with WidgetsBindingObserver {
   final _debugLog = DebugLogService();
   String _statusMessage = 'Ready to scan';
   LocationPermissionStatus _permissionStatus = LocationPermissionStatus.denied;
+  BluetoothPermissionStatus _bluetoothStatus =
+      BluetoothPermissionStatus.notRequired;
 
   @override
   void initState() {
@@ -84,15 +86,23 @@ class _ScanTabState extends State<ScanTab> with WidgetsBindingObserver {
 
   Future<void> _checkPermissionStatus() async {
     _debugLog.log('[ScanTab] _checkPermissionStatus() called');
-    final status = await widget.beaconService.getLocationPermissionStatus();
-    _debugLog.log('[ScanTab] Permission status checked: $status');
+    final locationStatus = await widget.beaconService
+        .getLocationPermissionStatus();
+    final bluetoothStatus = await widget.beaconService
+        .getBluetoothPermissionStatus();
+    _debugLog.log(
+      '[ScanTab] Permission status checked - Location: $locationStatus, Bluetooth: $bluetoothStatus',
+    );
     if (mounted) {
-      final oldStatus = _permissionStatus;
+      final oldLocationStatus = _permissionStatus;
+      final oldBluetoothStatus = _bluetoothStatus;
       setState(() {
-        _permissionStatus = status;
+        _permissionStatus = locationStatus;
+        _bluetoothStatus = bluetoothStatus;
       });
       _debugLog.log(
-        '[ScanTab] State updated: $oldStatus -> $_permissionStatus',
+        '[ScanTab] State updated - Location: $oldLocationStatus -> $_permissionStatus, '
+        'Bluetooth: $oldBluetoothStatus -> $_bluetoothStatus',
       );
     } else {
       _debugLog.log(
@@ -141,6 +151,8 @@ class _ScanTabState extends State<ScanTab> with WidgetsBindingObserver {
                 ),
                 const SizedBox(height: 24),
                 _buildPermissionStatusCard(),
+                const SizedBox(height: 12),
+                _buildBluetoothStatusCard(),
                 const SizedBox(height: 24),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
@@ -316,31 +328,114 @@ class _ScanTabState extends State<ScanTab> with WidgetsBindingObserver {
     );
   }
 
+  Widget _buildBluetoothStatusCard() {
+    String statusText;
+    Color statusColor;
+    IconData statusIcon;
+    String detailText = '';
+
+    switch (_bluetoothStatus) {
+      case BluetoothPermissionStatus.granted:
+        statusText = 'Bluetooth: 許可済み ✓';
+        statusColor = Colors.green;
+        statusIcon = Icons.check_circle;
+        detailText = 'Beaconのスキャンが可能です';
+        break;
+      case BluetoothPermissionStatus.denied:
+        statusText = 'Bluetooth: 未許可';
+        statusColor = Colors.orange;
+        statusIcon = Icons.warning;
+        detailText = 'Bluetooth権限を許可してください';
+        break;
+      case BluetoothPermissionStatus.permanentlyDenied:
+        statusText = 'Bluetooth: 拒否済み';
+        statusColor = Colors.red;
+        statusIcon = Icons.block;
+        detailText = '設定アプリから権限を変更してください';
+        break;
+      case BluetoothPermissionStatus.notRequired:
+        statusText = 'Bluetooth: OK';
+        statusColor = Colors.grey;
+        statusIcon = Icons.check_circle_outline;
+        detailText = 'このデバイスでは追加の権限は不要です';
+        break;
+    }
+
+    return Card(
+      color: statusColor.withOpacity(0.1),
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(statusIcon, color: statusColor),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    statusText,
+                    style: TextStyle(
+                      color: statusColor,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            if (detailText.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(
+                detailText,
+                style: TextStyle(
+                  color: statusColor.withOpacity(0.8),
+                  fontSize: 13,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _handleStartScanning() async {
     _debugLog.log('[ScanTab] _handleStartScanning called');
     _debugLog.log(
-      '[ScanTab] Current _permissionStatus before check: $_permissionStatus',
+      '[ScanTab] Current permissions before check - Location: $_permissionStatus, Bluetooth: $_bluetoothStatus',
     );
 
     // 権限状態を再確認
     await _checkPermissionStatus();
 
     _debugLog.log(
-      '[ScanTab] Current _permissionStatus after check: $_permissionStatus',
+      '[ScanTab] Current permissions after check - Location: $_permissionStatus, Bluetooth: $_bluetoothStatus',
     );
 
-    if (_permissionStatus == LocationPermissionStatus.always) {
-      // 「常に許可」の場合、スキャン開始
-      _debugLog.log('[ScanTab] Permission is always, starting scan...');
-      await widget.beaconService.startScanning();
-      setState(() {});
-    } else {
-      // それ以外の場合、権限リクエストダイアログを表示
+    // 位置情報の権限チェック
+    if (_permissionStatus != LocationPermissionStatus.always) {
       _debugLog.log(
-        '[ScanTab] Permission not always ($_permissionStatus), showing dialog...',
+        '[ScanTab] Location permission not always ($_permissionStatus), showing dialog...',
       );
       await _showPermissionDialog();
+      return;
     }
+
+    // Bluetooth権限チェック
+    if (_bluetoothStatus == BluetoothPermissionStatus.denied ||
+        _bluetoothStatus == BluetoothPermissionStatus.permanentlyDenied) {
+      _debugLog.log(
+        '[ScanTab] Bluetooth permission denied ($_bluetoothStatus), requesting...',
+      );
+      await _requestBluetoothPermission();
+      return;
+    }
+
+    // 全ての権限OK、スキャン開始
+    _debugLog.log('[ScanTab] All permissions OK, starting scan...');
+    await widget.beaconService.startScanning();
+    setState(() {});
   }
 
   Future<void> _showPermissionDialog() async {
@@ -358,11 +453,11 @@ class _ScanTabState extends State<ScanTab> with WidgetsBindingObserver {
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
-        title: const Row(
+        title: Row(
           children: [
-            Icon(Icons.location_on, color: Colors.blue),
-            SizedBox(width: 8),
-            Text('位置情報の許可が必要です'),
+            const Icon(Icons.location_on, color: Colors.blue),
+            const SizedBox(width: 8),
+            Expanded(child: const Text('位置情報の許可が必要です')),
           ],
         ),
         content: const SingleChildScrollView(
@@ -472,11 +567,11 @@ class _ScanTabState extends State<ScanTab> with WidgetsBindingObserver {
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
-        title: const Row(
+        title: Row(
           children: [
-            Icon(Icons.settings, color: Colors.blue),
-            SizedBox(width: 8),
-            Text('設定で「常に許可」に変更'),
+            const Icon(Icons.settings, color: Colors.blue),
+            const SizedBox(width: 8),
+            Expanded(child: const Text('設定で「常に許可」に変更')),
           ],
         ),
         content: const Column(
@@ -528,11 +623,11 @@ class _ScanTabState extends State<ScanTab> with WidgetsBindingObserver {
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
-        title: const Row(
+        title: Row(
           children: [
-            Icon(Icons.settings, color: Colors.orange),
-            SizedBox(width: 8),
-            Text('設定が必要です'),
+            const Icon(Icons.settings, color: Colors.orange),
+            const SizedBox(width: 8),
+            Expanded(child: const Text('設定が必要です')),
           ],
         ),
         content: const Column(
@@ -573,6 +668,94 @@ class _ScanTabState extends State<ScanTab> with WidgetsBindingObserver {
             _checkPermissionStatus();
           }
         });
+      }
+    }
+  }
+
+  Future<void> _requestBluetoothPermission() async {
+    _debugLog.log('[ScanTab] _requestBluetoothPermission called');
+
+    final result = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            const Icon(Icons.bluetooth, color: Colors.blue),
+            const SizedBox(width: 8),
+            Expanded(child: const Text('Bluetooth権限が必要です')),
+          ],
+        ),
+        content: const SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'ビーコンを検出するため、Bluetooth権限が必要です。',
+                style: TextStyle(fontSize: 16),
+              ),
+              SizedBox(height: 16),
+              Text(
+                '📱 権限を許可すると：',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+              ),
+              SizedBox(height: 8),
+              Text('• 近くのiBeaconを検出できます'),
+              Text('• バックグラウンドでも動作します'),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('キャンセル'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('許可する'),
+          ),
+        ],
+      ),
+    );
+
+    if (result == true && mounted) {
+      // Bluetooth権限をリクエスト
+      final requestResult = await widget.beaconService
+          .requestBluetoothPermission();
+
+      _debugLog.log(
+        '[ScanTab] Bluetooth permission request result: $requestResult',
+      );
+
+      // 権限状態を再確認
+      await _checkPermissionStatus();
+
+      if (requestResult == PermissionRequestResult.granted) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Bluetooth権限が許可されました'),
+              backgroundColor: Colors.green,
+              duration: Duration(seconds: 2),
+            ),
+          );
+          // 権限が取得できたのでスキャンを試行
+          await Future.delayed(const Duration(milliseconds: 500));
+          if (mounted) {
+            await _handleStartScanning();
+          }
+        }
+      } else if (requestResult == PermissionRequestResult.permanentlyDenied) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Bluetooth権限が拒否されています。設定から変更してください。'),
+              backgroundColor: Colors.red,
+              duration: Duration(seconds: 3),
+            ),
+          );
+        }
       }
     }
   }

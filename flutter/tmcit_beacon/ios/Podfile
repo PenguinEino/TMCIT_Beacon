@@ -70,6 +70,7 @@ post_install do |installer|
 
       ## dart: PermissionGroup.criticalAlerts
       #
+    ]
 
     end
     flutter_additional_ios_build_settings(target)
