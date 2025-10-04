@@ -92,12 +92,37 @@ class BeaconService {
         );
         return LocationPermissionStatus.whenInUse;
       }
-      // Android の場合
+      // Android の場合 - permission_handlerで正確な状態を確認
       else if (authStatus == AuthorizationStatus.allowed) {
         _debugLog.log(
-          '[BeaconService] Returning: LocationPermissionStatus.always (Android)',
+          '[BeaconService] Android ALLOWED detected, checking precise permission...',
         );
-        return LocationPermissionStatus.always;
+
+        // Android API 29+ では ACCESS_BACKGROUND_LOCATION が必要
+        final bgLocationStatus = await Permission.locationAlways.status;
+        final fineLocationStatus = await Permission.locationWhenInUse.status;
+
+        _debugLog.log(
+          '[BeaconService] Android permissions - Background: $bgLocationStatus, Fine: $fineLocationStatus',
+        );
+
+        if (bgLocationStatus.isGranted && fineLocationStatus.isGranted) {
+          _debugLog.log(
+            '[BeaconService] Returning: LocationPermissionStatus.always (Android with background)',
+          );
+          return LocationPermissionStatus.always;
+        } else if (fineLocationStatus.isGranted &&
+            !bgLocationStatus.isGranted) {
+          _debugLog.log(
+            '[BeaconService] Returning: LocationPermissionStatus.whenInUse (Android without background)',
+          );
+          return LocationPermissionStatus.whenInUse;
+        } else {
+          _debugLog.log(
+            '[BeaconService] Returning: LocationPermissionStatus.denied (Android missing permissions)',
+          );
+          return LocationPermissionStatus.denied;
+        }
       }
       // 拒否された場合
       else if (authStatus == AuthorizationStatus.denied) {
@@ -128,7 +153,7 @@ class BeaconService {
     _debugLog.log('[BeaconService] Starting permission request...');
 
     try {
-      // dchs_flutter_beacon の requestAuthorization を使用
+      // まず、dchs_flutter_beacon の requestAuthorization を使用
       _debugLog.log(
         '[BeaconService] Calling flutterBeacon.requestAuthorization...',
       );
@@ -142,8 +167,8 @@ class BeaconService {
         '[BeaconService] Authorization status after request: $authStatus (value: ${authStatus.value})',
       );
 
-      if (authStatus == AuthorizationStatus.always ||
-          authStatus == AuthorizationStatus.allowed) {
+      // iOS の場合
+      if (authStatus == AuthorizationStatus.always) {
         return PermissionRequestResult.granted;
       } else if (authStatus == AuthorizationStatus.whenInUse) {
         // iOS の場合、「使用中のみ許可」は取得できたが「常に許可」は取得できなかった
@@ -152,6 +177,40 @@ class BeaconService {
           '[BeaconService] Got WhenInUse, but need Always - directing to settings',
         );
         return PermissionRequestResult.needsSettings;
+      }
+      // Android の場合 - 追加で background location を要求
+      else if (authStatus == AuthorizationStatus.allowed) {
+        _debugLog.log(
+          '[BeaconService] Android ALLOWED, checking background permission...',
+        );
+
+        // Android API 29+ では ACCESS_BACKGROUND_LOCATION を明示的に要求
+        final bgLocationStatus = await Permission.locationAlways.status;
+        _debugLog.log(
+          '[BeaconService] Background location status: $bgLocationStatus',
+        );
+
+        if (!bgLocationStatus.isGranted) {
+          _debugLog.log(
+            '[BeaconService] Requesting background location permission...',
+          );
+          final bgResult = await Permission.locationAlways.request();
+          _debugLog.log(
+            '[BeaconService] Background location request result: $bgResult',
+          );
+
+          if (bgResult.isGranted) {
+            return PermissionRequestResult.granted;
+          } else if (bgResult.isPermanentlyDenied) {
+            return PermissionRequestResult.permanentlyDenied;
+          } else {
+            // ユーザーが拒否したか、設定画面での変更が必要
+            return PermissionRequestResult.needsSettings;
+          }
+        } else {
+          // すでに background location が許可されている
+          return PermissionRequestResult.granted;
+        }
       } else if (authStatus == AuthorizationStatus.denied ||
           authStatus == AuthorizationStatus.restricted) {
         return PermissionRequestResult.permanentlyDenied;

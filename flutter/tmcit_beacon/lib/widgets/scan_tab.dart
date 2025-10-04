@@ -248,26 +248,32 @@ class _ScanTabState extends State<ScanTab> with WidgetsBindingObserver {
     Color statusColor;
     IconData statusIcon;
 
+    String detailText = '';
+
     switch (_permissionStatus) {
       case LocationPermissionStatus.always:
         statusText = '位置情報: 常に許可 ✓';
         statusColor = Colors.green;
         statusIcon = Icons.check_circle;
+        detailText = 'バックグラウンドでのBeacon検出が可能です';
         break;
       case LocationPermissionStatus.whenInUse:
-        statusText = '位置情報: 使用中のみ許可 (不十分)';
+        statusText = '位置情報: 使用中のみ許可';
         statusColor = Colors.orange;
         statusIcon = Icons.warning;
+        detailText = 'バックグラウンド検出には「常に許可」が必要です';
         break;
       case LocationPermissionStatus.denied:
         statusText = '位置情報: 未許可';
         statusColor = Colors.red;
         statusIcon = Icons.error;
+        detailText = '位置情報の権限を許可してください';
         break;
       case LocationPermissionStatus.permanentlyDenied:
         statusText = '位置情報: 拒否済み';
         statusColor = Colors.red;
         statusIcon = Icons.block;
+        detailText = '設定アプリから権限を変更してください';
         break;
     }
 
@@ -275,19 +281,35 @@ class _ScanTabState extends State<ScanTab> with WidgetsBindingObserver {
       color: statusColor.withOpacity(0.1),
       child: Padding(
         padding: const EdgeInsets.all(16.0),
-        child: Row(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(statusIcon, color: statusColor),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                statusText,
+            Row(
+              children: [
+                Icon(statusIcon, color: statusColor),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    statusText,
+                    style: TextStyle(
+                      color: statusColor,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            if (detailText.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(
+                detailText,
                 style: TextStyle(
-                  color: statusColor,
-                  fontWeight: FontWeight.bold,
+                  color: statusColor.withOpacity(0.8),
+                  fontSize: 13,
                 ),
               ),
-            ),
+            ],
           ],
         ),
       ),
@@ -362,13 +384,22 @@ class _ScanTabState extends State<ScanTab> with WidgetsBindingObserver {
               SizedBox(height: 4),
               Text('2. その後、自動的に設定画面に移動'),
               Text('   「位置情報」→「常に」を選択'),
+              SizedBox(height: 16),
+              Text(
+                '🤖 Androidの場合の手順：',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+              ),
+              SizedBox(height: 8),
+              Text('1. まず「アプリの使用中のみ」を選択'),
+              SizedBox(height: 4),
+              Text('2. 次のダイアログで\n   「常に許可」を選択してください'),
               SizedBox(height: 12),
               Text(
-                '⚠️ 「使用中のみ許可」だけでは、バックグラウンドでビーコンを検出できません。',
+                '⚠️ 「使用中のみ許可」だけでは、バックグラウンドでビーコンを検出できません。必ず「常に許可」を選択してください。',
                 style: TextStyle(
                   fontSize: 12,
                   color: Colors.orange,
-                  fontStyle: FontStyle.italic,
+                  fontWeight: FontWeight.bold,
                 ),
               ),
             ],
