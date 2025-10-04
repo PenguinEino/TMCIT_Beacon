@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../services/debug_log_service.dart';
 
 class DebugLogDialog extends StatefulWidget {
@@ -28,6 +29,20 @@ class _DebugLogDialogState extends State<DebugLogDialog> {
     }
   }
 
+  Future<void> _copyAllLogs() async {
+    final allLogs = _debugLog.logs.join('\n');
+    await Clipboard.setData(ClipboardData(text: allLogs));
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('${_debugLog.logs.length}件のログをコピーしました'),
+          backgroundColor: Colors.green,
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Dialog(
@@ -46,6 +61,11 @@ class _DebugLogDialogState extends State<DebugLogDialog> {
                   style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                 ),
                 const Spacer(),
+                IconButton(
+                  icon: const Icon(Icons.copy_all),
+                  onPressed: _copyAllLogs,
+                  tooltip: '全ログをコピー',
+                ),
                 IconButton(
                   icon: const Icon(Icons.clear_all),
                   onPressed: () {
@@ -97,14 +117,90 @@ class _DebugLogDialogState extends State<DebugLogDialog> {
                           textColor = Colors.cyan;
                         }
 
-                        return Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 2),
-                          child: Text(
-                            log,
-                            style: TextStyle(
-                              fontFamily: 'monospace',
-                              fontSize: 11,
-                              color: textColor,
+                        return InkWell(
+                          onTap: () async {
+                            await Clipboard.setData(ClipboardData(text: log));
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('ログ行をコピーしました'),
+                                  backgroundColor: Colors.green,
+                                  duration: Duration(seconds: 1),
+                                ),
+                              );
+                            }
+                          },
+                          onLongPress: () {
+                            showDialog(
+                              context: context,
+                              builder: (context) => AlertDialog(
+                                title: Row(
+                                  children: [
+                                    Icon(Icons.text_snippet, color: textColor),
+                                    const SizedBox(width: 8),
+                                    const Text('ログ詳細'),
+                                  ],
+                                ),
+                                content: SingleChildScrollView(
+                                  child: SelectableText(
+                                    log,
+                                    style: TextStyle(
+                                      fontFamily: 'monospace',
+                                      fontSize: 14,
+                                      color: textColor,
+                                    ),
+                                  ),
+                                ),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () async {
+                                      await Clipboard.setData(
+                                        ClipboardData(text: log),
+                                      );
+                                      if (context.mounted) {
+                                        Navigator.of(context).pop();
+                                        ScaffoldMessenger.of(
+                                          context,
+                                        ).showSnackBar(
+                                          const SnackBar(
+                                            content: Text('ログをコピーしました'),
+                                            backgroundColor: Colors.green,
+                                            duration: Duration(seconds: 1),
+                                          ),
+                                        );
+                                      }
+                                    },
+                                    child: const Text('コピー'),
+                                  ),
+                                  TextButton(
+                                    onPressed: () =>
+                                        Navigator.of(context).pop(),
+                                    child: const Text('閉じる'),
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              vertical: 2,
+                              horizontal: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              border: Border(
+                                left: BorderSide(
+                                  color: textColor.withOpacity(0.3),
+                                  width: 2,
+                                ),
+                              ),
+                            ),
+                            child: SelectableText(
+                              log,
+                              style: TextStyle(
+                                fontFamily: 'monospace',
+                                fontSize: 11,
+                                color: textColor,
+                              ),
                             ),
                           ),
                         );
