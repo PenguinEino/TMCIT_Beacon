@@ -49,6 +49,21 @@ class BeaconService {
   Future<void> _initializeBeacon() async {
     try {
       await flutterBeacon.initializeScanning;
+
+      // iOS で「常に許可」を要求するように設定
+      try {
+        await flutterBeacon.setLocationAuthorizationTypeDefault(
+          AuthorizationStatus.always,
+        );
+        _debugLog.log(
+          '[BeaconService] Set location authorization type to ALWAYS',
+        );
+      } catch (e) {
+        _debugLog.log(
+          '[BeaconService] Could not set authorization type (may be Android): $e',
+        );
+      }
+
       _updateStatus('Beacon initialized');
     } catch (e) {
       _updateStatus('Initialization error: $e');
@@ -57,33 +72,53 @@ class BeaconService {
 
   /// 位置情報の権限状態を取得
   Future<LocationPermissionStatus> getLocationPermissionStatus() async {
-    final alwaysStatus = await Permission.locationAlways.status;
-    final whenInUseStatus = await Permission.locationWhenInUse.status;
+    try {
+      // dchs_flutter_beacon の authorizationStatus を使用
+      final authStatus = await flutterBeacon.authorizationStatus;
 
-    _debugLog.log(
-      '[BeaconService] getLocationPermissionStatus: Always=$alwaysStatus, WhenInUse=$whenInUseStatus',
-    );
+      _debugLog.log(
+        '[BeaconService] flutterBeacon.authorizationStatus: $authStatus (value: ${authStatus.value})',
+      );
 
-    if (alwaysStatus.isGranted) {
-      _debugLog.log(
-        '[BeaconService] Returning: LocationPermissionStatus.always',
-      );
-      return LocationPermissionStatus.always;
-    } else if (whenInUseStatus.isGranted) {
-      _debugLog.log(
-        '[BeaconService] Returning: LocationPermissionStatus.whenInUse',
-      );
-      return LocationPermissionStatus.whenInUse;
-    } else if (alwaysStatus.isPermanentlyDenied ||
-        whenInUseStatus.isPermanentlyDenied) {
-      _debugLog.log(
-        '[BeaconService] Returning: LocationPermissionStatus.permanentlyDenied',
-      );
-      return LocationPermissionStatus.permanentlyDenied;
-    } else {
-      _debugLog.log(
-        '[BeaconService] Returning: LocationPermissionStatus.denied',
-      );
+      // iOS の場合
+      if (authStatus == AuthorizationStatus.always) {
+        _debugLog.log(
+          '[BeaconService] Returning: LocationPermissionStatus.always',
+        );
+        return LocationPermissionStatus.always;
+      } else if (authStatus == AuthorizationStatus.whenInUse) {
+        _debugLog.log(
+          '[BeaconService] Returning: LocationPermissionStatus.whenInUse',
+        );
+        return LocationPermissionStatus.whenInUse;
+      }
+      // Android の場合
+      else if (authStatus == AuthorizationStatus.allowed) {
+        _debugLog.log(
+          '[BeaconService] Returning: LocationPermissionStatus.always (Android)',
+        );
+        return LocationPermissionStatus.always;
+      }
+      // 拒否された場合
+      else if (authStatus == AuthorizationStatus.denied) {
+        _debugLog.log(
+          '[BeaconService] Returning: LocationPermissionStatus.permanentlyDenied',
+        );
+        return LocationPermissionStatus.permanentlyDenied;
+      } else if (authStatus == AuthorizationStatus.restricted) {
+        _debugLog.log(
+          '[BeaconService] Returning: LocationPermissionStatus.permanentlyDenied (restricted)',
+        );
+        return LocationPermissionStatus.permanentlyDenied;
+      } else {
+        // notDetermined
+        _debugLog.log(
+          '[BeaconService] Returning: LocationPermissionStatus.denied (notDetermined)',
+        );
+        return LocationPermissionStatus.denied;
+      }
+    } catch (e) {
+      _debugLog.log('[BeaconService] Error getting auth status: $e');
       return LocationPermissionStatus.denied;
     }
   }
@@ -92,58 +127,41 @@ class BeaconService {
   Future<PermissionRequestResult> requestAlwaysLocationPermission() async {
     _debugLog.log('[BeaconService] Starting permission request...');
 
-    // まず「使用中のみ許可」を取得
-    var whenInUseStatus = await Permission.locationWhenInUse.status;
-    _debugLog.log('[BeaconService] Initial whenInUse status: $whenInUseStatus');
-
-    if (!whenInUseStatus.isGranted) {
-      _debugLog.log('[BeaconService] Requesting whenInUse permission...');
-      final result = await Permission.locationWhenInUse.request();
-      _debugLog.log('[BeaconService] WhenInUse request result: $result');
-
-      if (!result.isGranted) {
-        if (result.isPermanentlyDenied) {
-          return PermissionRequestResult.permanentlyDenied;
-        }
-        return PermissionRequestResult.denied;
-      }
-      whenInUseStatus = result;
-    }
-
-    // iOSの場合、「使用中のみ許可」を取得した後、
-    // locationAlwaysのリクエストは設定画面への誘導が必要
-    var alwaysStatus = await Permission.locationAlways.status;
-    _debugLog.log('[BeaconService] Always status: $alwaysStatus');
-
-    if (!alwaysStatus.isGranted) {
-      _debugLog.log('[BeaconService] Requesting always permission...');
-
-      // iOS では、Always 権限は設定画面でしか変更できない場合がある
-      final result = await Permission.locationAlways.request();
-      _debugLog.log('[BeaconService] Always request result: $result');
-
-      // 結果を再確認
-      await Future.delayed(const Duration(milliseconds: 500));
-      alwaysStatus = await Permission.locationAlways.status;
+    try {
+      // dchs_flutter_beacon の requestAuthorization を使用
       _debugLog.log(
-        '[BeaconService] Always status after request: $alwaysStatus',
+        '[BeaconService] Calling flutterBeacon.requestAuthorization...',
+      );
+      final result = await flutterBeacon.requestAuthorization;
+      _debugLog.log('[BeaconService] requestAuthorization result: $result');
+
+      // 権限状態を再確認
+      await Future.delayed(const Duration(milliseconds: 500));
+      final authStatus = await flutterBeacon.authorizationStatus;
+      _debugLog.log(
+        '[BeaconService] Authorization status after request: $authStatus (value: ${authStatus.value})',
       );
 
-      if (alwaysStatus.isGranted) {
+      if (authStatus == AuthorizationStatus.always ||
+          authStatus == AuthorizationStatus.allowed) {
         return PermissionRequestResult.granted;
-      } else if (alwaysStatus.isPermanentlyDenied ||
-          result.isPermanentlyDenied) {
-        return PermissionRequestResult.permanentlyDenied;
-      } else if (whenInUseStatus.isGranted && !alwaysStatus.isGranted) {
+      } else if (authStatus == AuthorizationStatus.whenInUse) {
         // iOS の場合、「使用中のみ許可」は取得できたが「常に許可」は取得できなかった
         // これは設定画面での変更が必要な状態
+        _debugLog.log(
+          '[BeaconService] Got WhenInUse, but need Always - directing to settings',
+        );
         return PermissionRequestResult.needsSettings;
+      } else if (authStatus == AuthorizationStatus.denied ||
+          authStatus == AuthorizationStatus.restricted) {
+        return PermissionRequestResult.permanentlyDenied;
       } else {
         return PermissionRequestResult.denied;
       }
+    } catch (e) {
+      _debugLog.log('[BeaconService] Error requesting authorization: $e');
+      return PermissionRequestResult.denied;
     }
-
-    return PermissionRequestResult.granted;
   }
 
   /// Bluetooth権限をチェック・リクエスト
