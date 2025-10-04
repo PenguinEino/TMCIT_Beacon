@@ -118,10 +118,35 @@ lib/
 ├── screens/
 │   └── home_screen.dart         # メイン画面（タブ管理）
 ├── services/
-│   └── beacon_service.dart      # ビーコンスキャンロジック
+│   ├── beacon_service.dart      # ビーコンスキャンロジック
+│   └── debug_log_service.dart   # デバッグログサービス
 └── widgets/
     ├── scan_tab.dart            # スキャンタブUI
-    └── beacon_list_tab.dart     # ビーコン一覧タブUI
+    ├── beacon_list_tab.dart     # ビーコン一覧タブUI
+    └── debug_log_dialog.dart    # デバッグログビューア
+```
+
+## 技術的な詳細
+
+### 権限管理の実装
+
+このアプリは`permission_handler`パッケージを使用して、iOS/Android両方で正確な権限状態を管理しています。
+
+**dchs_flutter_beaconの制限:**
+- iOS: アプリ内からの権限取得直後、`authorizationStatus`が不正確な値を返すことがある
+- Android: `ALLOWED`のみを返し、「使用中のみ」と「常に許可」を区別できない
+
+**解決策:**
+```dart
+// permission_handlerを使用した正確な判定
+final alwaysStatus = await Permission.locationAlways.status;
+final whenInUseStatus = await Permission.locationWhenInUse.status;
+
+if (alwaysStatus.isGranted) {
+  // ✅ バックグラウンド検出可能
+} else if (whenInUseStatus.isGranted) {
+  // ⚠️ フォアグラウンドのみ
+}
 ```
 
 ## トラブルシューティング

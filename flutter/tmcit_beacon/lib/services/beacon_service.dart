@@ -73,72 +73,50 @@ class BeaconService {
   /// 位置情報の権限状態を取得
   Future<LocationPermissionStatus> getLocationPermissionStatus() async {
     try {
-      // dchs_flutter_beacon の authorizationStatus を使用
-      final authStatus = await flutterBeacon.authorizationStatus;
+      // permission_handler を使用して正確な権限状態を取得
+      final alwaysStatus = await Permission.locationAlways.status;
+      final whenInUseStatus = await Permission.locationWhenInUse.status;
 
       _debugLog.log(
-        '[BeaconService] flutterBeacon.authorizationStatus: $authStatus (value: ${authStatus.value})',
+        '[BeaconService] permission_handler status - Always: $alwaysStatus, WhenInUse: $whenInUseStatus',
       );
 
-      // iOS の場合
-      if (authStatus == AuthorizationStatus.always) {
+      // 参考: dchs_flutter_beacon の authorizationStatus も記録
+      try {
+        final beaconAuthStatus = await flutterBeacon.authorizationStatus;
+        _debugLog.log(
+          '[BeaconService] (Reference) flutterBeacon.authorizationStatus: $beaconAuthStatus (value: ${beaconAuthStatus.value})',
+        );
+      } catch (e) {
+        _debugLog.log('[BeaconService] Could not get beacon auth status: $e');
+      }
+
+      // iOS/Android 共通の判定ロジック
+      if (alwaysStatus.isGranted) {
         _debugLog.log(
           '[BeaconService] Returning: LocationPermissionStatus.always',
         );
         return LocationPermissionStatus.always;
-      } else if (authStatus == AuthorizationStatus.whenInUse) {
+      } else if (whenInUseStatus.isGranted) {
         _debugLog.log(
           '[BeaconService] Returning: LocationPermissionStatus.whenInUse',
         );
         return LocationPermissionStatus.whenInUse;
-      }
-      // Android の場合 - permission_handlerで正確な状態を確認
-      else if (authStatus == AuthorizationStatus.allowed) {
-        _debugLog.log(
-          '[BeaconService] Android ALLOWED detected, checking precise permission...',
-        );
-
-        // Android API 29+ では ACCESS_BACKGROUND_LOCATION が必要
-        final bgLocationStatus = await Permission.locationAlways.status;
-        final fineLocationStatus = await Permission.locationWhenInUse.status;
-
-        _debugLog.log(
-          '[BeaconService] Android permissions - Background: $bgLocationStatus, Fine: $fineLocationStatus',
-        );
-
-        if (bgLocationStatus.isGranted && fineLocationStatus.isGranted) {
-          _debugLog.log(
-            '[BeaconService] Returning: LocationPermissionStatus.always (Android with background)',
-          );
-          return LocationPermissionStatus.always;
-        } else if (fineLocationStatus.isGranted &&
-            !bgLocationStatus.isGranted) {
-          _debugLog.log(
-            '[BeaconService] Returning: LocationPermissionStatus.whenInUse (Android without background)',
-          );
-          return LocationPermissionStatus.whenInUse;
-        } else {
-          _debugLog.log(
-            '[BeaconService] Returning: LocationPermissionStatus.denied (Android missing permissions)',
-          );
-          return LocationPermissionStatus.denied;
-        }
-      }
-      // 拒否された場合
-      else if (authStatus == AuthorizationStatus.denied) {
+      } else if (alwaysStatus.isPermanentlyDenied ||
+          whenInUseStatus.isPermanentlyDenied) {
         _debugLog.log(
           '[BeaconService] Returning: LocationPermissionStatus.permanentlyDenied',
         );
         return LocationPermissionStatus.permanentlyDenied;
-      } else if (authStatus == AuthorizationStatus.restricted) {
+      } else if (alwaysStatus.isDenied || whenInUseStatus.isDenied) {
         _debugLog.log(
-          '[BeaconService] Returning: LocationPermissionStatus.permanentlyDenied (restricted)',
+          '[BeaconService] Returning: LocationPermissionStatus.denied',
         );
-        return LocationPermissionStatus.permanentlyDenied;
+        return LocationPermissionStatus.denied;
       } else {
-        // notDetermined
+        // notDetermined など
         _debugLog.log(
-          '[BeaconService] Returning: LocationPermissionStatus.denied (notDetermined)',
+          '[BeaconService] Returning: LocationPermissionStatus.denied (default)',
         );
         return LocationPermissionStatus.denied;
       }
@@ -153,70 +131,65 @@ class BeaconService {
     _debugLog.log('[BeaconService] Starting permission request...');
 
     try {
-      // まず、dchs_flutter_beacon の requestAuthorization を使用
+      // ステップ1: まず「使用中のみ許可」を取得
+      var whenInUseStatus = await Permission.locationWhenInUse.status;
       _debugLog.log(
-        '[BeaconService] Calling flutterBeacon.requestAuthorization...',
-      );
-      final result = await flutterBeacon.requestAuthorization;
-      _debugLog.log('[BeaconService] requestAuthorization result: $result');
-
-      // 権限状態を再確認
-      await Future.delayed(const Duration(milliseconds: 500));
-      final authStatus = await flutterBeacon.authorizationStatus;
-      _debugLog.log(
-        '[BeaconService] Authorization status after request: $authStatus (value: ${authStatus.value})',
+        '[BeaconService] Initial WhenInUse status: $whenInUseStatus',
       );
 
-      // iOS の場合
-      if (authStatus == AuthorizationStatus.always) {
-        return PermissionRequestResult.granted;
-      } else if (authStatus == AuthorizationStatus.whenInUse) {
-        // iOS の場合、「使用中のみ許可」は取得できたが「常に許可」は取得できなかった
-        // これは設定画面での変更が必要な状態
+      if (!whenInUseStatus.isGranted) {
+        _debugLog.log('[BeaconService] Requesting WhenInUse permission...');
+        whenInUseStatus = await Permission.locationWhenInUse.request();
         _debugLog.log(
-          '[BeaconService] Got WhenInUse, but need Always - directing to settings',
-        );
-        return PermissionRequestResult.needsSettings;
-      }
-      // Android の場合 - 追加で background location を要求
-      else if (authStatus == AuthorizationStatus.allowed) {
-        _debugLog.log(
-          '[BeaconService] Android ALLOWED, checking background permission...',
+          '[BeaconService] WhenInUse request result: $whenInUseStatus',
         );
 
-        // Android API 29+ では ACCESS_BACKGROUND_LOCATION を明示的に要求
-        final bgLocationStatus = await Permission.locationAlways.status;
-        _debugLog.log(
-          '[BeaconService] Background location status: $bgLocationStatus',
-        );
-
-        if (!bgLocationStatus.isGranted) {
-          _debugLog.log(
-            '[BeaconService] Requesting background location permission...',
-          );
-          final bgResult = await Permission.locationAlways.request();
-          _debugLog.log(
-            '[BeaconService] Background location request result: $bgResult',
-          );
-
-          if (bgResult.isGranted) {
-            return PermissionRequestResult.granted;
-          } else if (bgResult.isPermanentlyDenied) {
+        if (!whenInUseStatus.isGranted) {
+          if (whenInUseStatus.isPermanentlyDenied) {
             return PermissionRequestResult.permanentlyDenied;
-          } else {
-            // ユーザーが拒否したか、設定画面での変更が必要
-            return PermissionRequestResult.needsSettings;
           }
-        } else {
-          // すでに background location が許可されている
-          return PermissionRequestResult.granted;
+          return PermissionRequestResult.denied;
         }
-      } else if (authStatus == AuthorizationStatus.denied ||
-          authStatus == AuthorizationStatus.restricted) {
-        return PermissionRequestResult.permanentlyDenied;
-      } else {
-        return PermissionRequestResult.denied;
       }
+
+      // ステップ2: 「常に許可」を取得
+      _debugLog.log('[BeaconService] WhenInUse granted, requesting Always...');
+      var alwaysStatus = await Permission.locationAlways.status;
+      _debugLog.log('[BeaconService] Initial Always status: $alwaysStatus');
+
+      if (!alwaysStatus.isGranted) {
+        _debugLog.log('[BeaconService] Requesting Always permission...');
+        alwaysStatus = await Permission.locationAlways.request();
+        _debugLog.log('[BeaconService] Always request result: $alwaysStatus');
+
+        // 結果を再確認（OSによる遅延を考慮）
+        await Future.delayed(const Duration(milliseconds: 500));
+        alwaysStatus = await Permission.locationAlways.status;
+        whenInUseStatus = await Permission.locationWhenInUse.status;
+        _debugLog.log(
+          '[BeaconService] After delay - Always: $alwaysStatus, WhenInUse: $whenInUseStatus',
+        );
+
+        if (alwaysStatus.isGranted) {
+          return PermissionRequestResult.granted;
+        } else if (alwaysStatus.isPermanentlyDenied) {
+          return PermissionRequestResult.permanentlyDenied;
+        } else if (whenInUseStatus.isGranted && !alwaysStatus.isGranted) {
+          // iOSの場合: 「使用中のみ許可」は取得できたが「常に許可」は取得できなかった
+          // Androidの場合: バックグラウンド権限が拒否された
+          // どちらも設定画面での変更が必要
+          _debugLog.log(
+            '[BeaconService] Got WhenInUse but not Always - needs settings',
+          );
+          return PermissionRequestResult.needsSettings;
+        } else {
+          return PermissionRequestResult.denied;
+        }
+      }
+
+      // すでに「常に許可」が付与されている
+      _debugLog.log('[BeaconService] Always permission already granted');
+      return PermissionRequestResult.granted;
     } catch (e) {
       _debugLog.log('[BeaconService] Error requesting authorization: $e');
       return PermissionRequestResult.denied;
